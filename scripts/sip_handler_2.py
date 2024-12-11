@@ -4,10 +4,12 @@ import re
 import asyncio
 import aiofiles
 import time
+from concurrent.futures import ThreadPoolExecutor
 from OpenSIPS import *
 
 class Test:
     def __init__(self):
+        self.executor = ThreadPoolExecutor(max_workers=1)
         LM_ERR('Python script initialized.\n')
 
     def child_init(self, y):
@@ -101,7 +103,7 @@ class Test:
         from_user = from_uri["user"]
         # Apply the response time and introduce a delay of 300ms before sending the response back
         delay_start = time.time()
-        asyncio.run(self.delay_response(300))  # Introduce 300ms delay
+        asyncio.run(self.delay_response(50))  # Introduce 300ms delay
         delay_end = time.time()
 
         # Calculate the time taken to process and add the delay before sending the response
@@ -153,40 +155,37 @@ class Test:
 
     async def async_save_to_json(self, data):
         file_path = '/usr/local/etc/opensips/python/save/headers.json'
-        directory = os.path.dirname(file_path)
+        loop = asyncio.get_event_loop()
 
-        if not os.path.exists(directory):
-            try:
-                os.makedirs(directory)
+        def save_task():
+            directory = os.path.dirname(file_path)
+            if not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
                 LM_ERR(f"Directory created: {directory}")
-            except Exception as e:
-                LM_ERR(f"Error creating directory {directory}: {e}")
-                return
 
-        existing_data = []
-        if os.path.exists(file_path):
-            try:
-                async with aiofiles.open(file_path, 'r') as json_file:
-                    content = await json_file.read()
-                    if content.strip():
-                        existing_data = json.loads(content)
-                    else:
-                        LM_ERR(f"File {file_path} is empty.")
-            except (json.JSONDecodeError, FileNotFoundError) as e:
-                LM_ERR(f"Error reading JSON data: {e}")
-
-        if not isinstance(existing_data, list):
             existing_data = []
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, 'r') as json_file:
+                        content = json_file.read()
+                        if content.strip():
+                            existing_data = json.loads(content)
+                except (json.JSONDecodeError, FileNotFoundError) as e:
+                    LM_ERR(f"Error reading JSON data: {e}")
 
-        existing_data.append(data)
+            if not isinstance(existing_data, list):
+                existing_data = []
 
-        try:
-            async with aiofiles.open(file_path, 'w') as json_file:
-                await json_file.write(json.dumps(existing_data, indent=4))
-                LM_ERR(f"Headers saved to {file_path}")
-        except Exception as e:
-            LM_ERR(f"Error saving JSON: {e}")
+            existing_data.append(data)
 
+            try:
+                with open(file_path, 'w') as json_file:
+                    json.dump(existing_data, json_file, indent=4)
+                    LM_ERR(f"Headers saved to {file_path}")
+            except Exception as e:
+                LM_ERR(f"Error saving JSON: {e}")
+
+        await loop.run_in_executor(self.executor, save_task)
     async def delay_response(self, delay_ms):
         LM_ERR(f"Delaying response by {delay_ms} ms.")
         await asyncio.sleep(delay_ms / 1000.0)
