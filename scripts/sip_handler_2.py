@@ -1,8 +1,6 @@
 import os
 import json
 import re
-import asyncio
-import aiofiles
 import time
 from concurrent.futures import ThreadPoolExecutor
 from OpenSIPS import *
@@ -23,7 +21,8 @@ class Test:
         # Extract Method, RURI, and headers
         method = msg.Method
         ruri = msg.RURI
-         # Time parsing headers
+        
+        # Time parsing headers
         parse_start = time.time()
 
         from_header = msg.getHeader('from')
@@ -94,16 +93,19 @@ class Test:
         }
         parse_end = time.time()
         LM_ERR(f"Header parsing time: {(parse_end - parse_start) * 1000:.2f} ms")
+
+        # Save the parsed data using the executor
         save_start = time.time()
-        asyncio.run(self.async_save_to_json(header_data))
+        self.executor.submit(self.save_to_json, header_data)
         save_end = time.time()
         LM_ERR(f"Log saving time: {(save_end - save_start) * 1000:.2f} ms")
 
         target_number = "+919560690446"
         from_user = from_uri["user"]
-        # Apply the response time and introduce a delay of 300ms before sending the response back
+
+        # Apply the response time and introduce a delay of 50ms before sending the response back
         delay_start = time.time()
-        asyncio.run(self.delay_response(50))  # Introduce 300ms delay
+        self.delay_response(50)
         delay_end = time.time()
 
         # Calculate the time taken to process and add the delay before sending the response
@@ -153,42 +155,39 @@ class Test:
             LM_ERR(f"Error: Unable to parse Via header: {header}")
             return {'host': None, 'port': None, 'parameters': None}
 
-    async def async_save_to_json(self, data):
+    def save_to_json(self, data):
         file_path = '/usr/local/etc/opensips/python/save/headers.json'
-        loop = asyncio.get_event_loop()
+        directory = os.path.dirname(file_path)
 
-        def save_task():
-            directory = os.path.dirname(file_path)
-            if not os.path.exists(directory):
-                os.makedirs(directory, exist_ok=True)
-                LM_ERR(f"Directory created: {directory}")
+        if not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+            LM_ERR(f"Directory created: {directory}")
 
-            existing_data = []
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, 'r') as json_file:
-                        content = json_file.read()
-                        if content.strip():
-                            existing_data = json.loads(content)
-                except (json.JSONDecodeError, FileNotFoundError) as e:
-                    LM_ERR(f"Error reading JSON data: {e}")
-
-            if not isinstance(existing_data, list):
-                existing_data = []
-
-            existing_data.append(data)
-
+        existing_data = []
+        if os.path.exists(file_path):
             try:
-                with open(file_path, 'w') as json_file:
-                    json.dump(existing_data, json_file, indent=4)
-                    LM_ERR(f"Headers saved to {file_path}")
-            except Exception as e:
-                LM_ERR(f"Error saving JSON: {e}")
+                with open(file_path, 'r') as json_file:
+                    content = json_file.read()
+                    if content.strip():
+                        existing_data = json.loads(content)
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                LM_ERR(f"Error reading JSON data: {e}")
 
-        await loop.run_in_executor(self.executor, save_task)
-    async def delay_response(self, delay_ms):
+        if not isinstance(existing_data, list):
+            existing_data = []
+
+        existing_data.append(data)
+
+        try:
+            with open(file_path, 'w') as json_file:
+                json.dump(existing_data, json_file, indent=4)
+                LM_ERR(f"Headers saved to {file_path}")
+        except Exception as e:
+            LM_ERR(f"Error saving JSON: {e}")
+
+    def delay_response(self, delay_ms):
         LM_ERR(f"Delaying response by {delay_ms} ms.")
-        await asyncio.sleep(delay_ms / 1000.0)
+        time.sleep(delay_ms / 1000.0)
 
 def mod_init():
     LM_ERR('Initializing Python module...\n')
