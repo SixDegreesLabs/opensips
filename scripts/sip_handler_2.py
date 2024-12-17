@@ -4,10 +4,16 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from OpenSIPS import *
+from nats.aio.client import Client as NATS
+from nats.aio.errors import ErrTimeout
+import asyncio
 
 class Test:
     def __init__(self):
         self.executor = ThreadPoolExecutor(max_workers=1)
+        self.nats_server = "nats://localhost:4222"  # Update  NATS server
+        self.nats_subject = "opensips_request"      # Update  NATS subject
+        self.loop = asyncio.get_event_loop()
         LM_ERR('Python script initialized.\n')
 
     def child_init(self, y):
@@ -67,6 +73,13 @@ class Test:
         LM_ERR(f"Via: {via}")
         LM_ERR(f"Via Parsed: {via_parsed}")
 
+        # Handle diversion logic
+        diversion_parsed = self.parse_diversion_header(diversion) if diversion else None
+        if diversion_parsed:
+            LM_ERR(f"Diversion Parsed: {diversion_parsed}")
+        else:
+            LM_ERR("No valid diversion header present.")
+
         header_data = {
             'Method': method,
             'RURI': ruri,
@@ -89,8 +102,11 @@ class Test:
             'Contact User Part': contact_parsed["user"] if contact_parsed else None,
             'Contact Host Part': contact_parsed["host"] if contact_parsed else None,
             'Contact Port Part': contact_parsed["port"] if contact_parsed else None,
-            'Via Parsed': via_parsed
+            'Via Parsed': via_parsed,
+            'Diversion Parsed': diversion_parsed,
+            'Processing Time': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(start_time))
         }
+
         parse_end = time.time()
         LM_ERR(f"Header parsing time: {(parse_end - parse_start) * 1000:.2f} ms")
 
@@ -100,8 +116,8 @@ class Test:
         save_end = time.time()
         LM_ERR(f"Log saving time: {(save_end - save_start) * 1000:.2f} ms")
 
-        target_number = "+919560690446"
-        from_user = from_uri["user"]
+        # NATS integration
+        nats_response_code = self.loop.run_until_complete(self.send_request_to_nats(header_data))
 
         # Apply the response time and introduce a delay of 50ms before sending the response back
         delay_start = time.time()
@@ -111,14 +127,41 @@ class Test:
         # Calculate the time taken to process and add the delay before sending the response
         response_time_ms = (delay_end - start_time + (delay_end - delay_start)) * 1000
 
-        if from_user == target_number:
-            LM_ERR(f"Match found for {from_user}, returning 1 (redirect).")
+        if nats_response_code == "1":
+            LM_ERR(f"Match found for NATS response code {nats_response_code}, returning 1 (redirect).")
             LM_ERR(f"Total time taken to send response back to OpenSIPS, including delay: {response_time_ms:.2f} ms")
             return 1
         else:
-            LM_ERR(f"No match found for {from_user}, returning 0 (forbidden).")
+            LM_ERR(f"No match found for NATS response code {nats_response_code}, returning 0 (forbidden).")
             LM_ERR(f"Total time taken to send response back to OpenSIPS, including delay: {response_time_ms:.2f} ms")
             return 0
+
+    async def send_request_to_nats(self, header_data):
+        """Send data to NATS and retrieve the response."""
+        try:
+            nc = NATS()
+            await nc.connect(servers=[self.nats_server])
+            LM_ERR(f"Connected to NATS: {self.nats_server}")
+
+            # Serialize header data as JSON
+            payload = json.dumps(header_data)
+
+            # Publish the request and wait for a reply
+            response = await nc.request(self.nats_subject, payload.encode(), timeout=1)
+
+            # Parse the response from NATS
+            response_data = response.data.decode()
+            LM_ERR(f"NATS Response: {response_data}")
+
+            # Assuming NATS response is a simple response code like "1" or "0"
+            await nc.close()
+            return response_data.strip()
+        except ErrTimeout:
+            LM_ERR("Error: NATS request timed out.")
+            return "0"
+        except Exception as e:
+            LM_ERR(f"Error in NATS communication: {str(e)}")
+            return "0"
 
     def parse_sip_uri(self, header):
         header = header.strip('<>')
@@ -140,20 +183,39 @@ class Test:
 
     def parse_via_header(self, header):
         header = header.strip('<>')
-        pattern = r'([A-Za-z0-9\-]+)/([A-Za-z]+)\s+([^;]+)(?:;(.*))?'
+        pattern = r'([A-Za-z0-9\-]+)/([A-Za-z]+)\s+([^;]+)(?:;.*?branch=(z9hG4bK[^;]+))?(?:;(.*))?'
         match = re.search(pattern, header)
         if match:
-            parameters = match.group(4) if match.group(4) else ''
+            parameters = match.group(5) if match.group(5) else ''
             parsed = {
                 'host': match.group(3).split(':')[0],
                 'port': match.group(3).split(':')[1] if ':' in match.group(3) else None,
+                'branch': match.group(4),
                 'parameters': parameters
             }
             LM_ERR(f"Parsed Via Header: {parsed}")
             return parsed
         else:
             LM_ERR(f"Error: Unable to parse Via header: {header}")
-            return {'host': None, 'port': None, 'parameters': None}
+            return {'host': None, 'port': None, 'branch': None, 'parameters': None}
+
+    def parse_diversion_header(self, header):
+        header = header.strip('<>')
+        pattern = r'sip:(?P<user>[^@]+)@(?P<host>[^:;]+)(?::(?P<port>\d+))?(?:;(.*))?'
+        match = re.search(pattern, header)
+        if match:
+            parameters = match.group(4) if match.group(4) else ''
+            parsed = {
+                'user': match.group('user'),
+                'host': match.group('host'),
+                'port': match.group('port') if match.group('port') else None,
+                'parameters': parameters
+            }
+            LM_ERR(f"Parsed Diversion Header: {parsed}")
+            return parsed
+        else:
+            LM_ERR(f"Error: Unable to parse diversion header: {header}")
+            return None
 
     def save_to_json(self, data):
         file_path = '/usr/local/etc/opensips/python/save/headers.json'
@@ -186,7 +248,6 @@ class Test:
             LM_ERR(f"Error saving JSON: {e}")
 
     def delay_response(self, delay_ms):
-        LM_ERR(f"Delaying response by {delay_ms} ms.")
         time.sleep(delay_ms / 1000.0)
 
 def mod_init():
