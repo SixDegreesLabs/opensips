@@ -253,3 +253,43 @@ class Test:
 def mod_init():
     LM_ERR('Initializing Python module...\n')
     return Test()
+"""
+{
+     	"Method": "INVITE",
+        "RURI": "sip:+919560690446@192.168.1.1;user=phone",
+        "To": "<sip:+2348022221036@10.10.1.1>;tag=1",
+        "From User Part": "+919560690446",
+        "From Host Part": "192.168.1.1",
+        "From Port Part": null,
+        "To User Part": "+2348022221036",
+        "To Host Part": "10.10.1.1",
+        "To Port Part": null,
+        "Call-ID": "1-710044@127.0.0.1",
+        "CSeq": "1 INVITE",
+        "P-Asserted-Identity": "+919560690446 <sip:+919560690446@192.168.1.1>",
+        "P-Asserted-Identity Display Name": "+919560690446",
+        "P-Asserted-Identity SIP URI": "sip:+919560690446@192.168.1.1",
+        "P-Asserted-Identity User": "+919560690446",
+        "P-Asserted-Identity Host": "192.168.1.1",
+        "P-Asserted-Identity Port": null,
+        "P-Asserted-Identity Parameters": "",
+        "P-Charge-Info": null,
+        "Max-Forwards": "70",
+        "Contact User Part": "+919560690446",
+        "Contact Host Part": "127.0.0.1",
+        "Contact Port Part": "5061",
+        "Via Parsed": {
+            "host": "127.0.0.1",
+            "port": "5061",
+            "branch": "z9hG4bK-710044-1-0",
+            "parameters": ""
+        },
+        "Diversion Parsed": {
+            "user": "10.10.2.2",
+            "host": "+2348022221000",
+            "port": null,
+            "parameters": "privacy=off;reason=no-answer;counter=1;screen=no"
+        },
+	"Processing Time": "2024-12-18 13:55:32"
+    }
+  """
